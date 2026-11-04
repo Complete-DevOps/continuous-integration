@@ -37,7 +37,6 @@ jobs:
             SERVICE_NAME=$(yq eval '.Build.serviceName // ""' .pipeline/flow.yml 2>/dev/null)
           fi
 
-          # Fallback to repo name if serviceName is not defined in flow.yml
           if [ -z "$SERVICE_NAME" ] || [ "$SERVICE_NAME" = "null" ]; then
             SERVICE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           fi
@@ -55,7 +54,7 @@ jobs:
           docker build -t "$SERVICE-local:latest" .
           echo "Successfully created local image."
 
-      - name: Push Docker Image to Docker Hub
+      - name: Push Docker Image to Docker Hub & Prune Old Tags
         if: steps.load_config.outputs.push_enabled == 'true'
         env:
           DOCKER_USER: ${{ secrets.docker_username }}
@@ -69,15 +68,14 @@ jobs:
           fi
 
           VERSION_TAG=$(echo "$INPUT_IMAGE_NAME" | sed 's/^[^-]*-//')
-
           TARGET_REPO="$DOCKER_USER/unified-resources"
           
           FULL_IMAGE_NAME="$TARGET_REPO:$SERVICE_NAME-$VERSION_TAG"
           LATEST_IMAGE_NAME="$TARGET_REPO:$SERVICE_NAME-latest"
 
           echo "Tagging image -> $FULL_IMAGE_NAME"
-          docker tag "$SERVICE_NAME-local:latest" "$FULL_IMAGE_NAME"
-          docker tag "$SERVICE_NAME-local:latest" "$LATEST_IMAGE_NAME"
+          docker tag "$SERVICE-local:latest" "$FULL_IMAGE_NAME"
+          docker tag "$SERVICE-local:latest" "$LATEST_IMAGE_NAME"
 
           echo "Logging into Docker Hub..."
           echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
@@ -86,3 +84,34 @@ jobs:
           docker push "$FULL_IMAGE_NAME"
           docker push "$LATEST_IMAGE_NAME"
           echo "Successfully pushed $SERVICE_NAME images to $TARGET_REPO!"
+
+          echo "Cleaning up old Docker Hub tags (keeping latest 2 runs)..."
+          
+          # 1. Get Docker Hub JWT Token
+          TOKEN=$(curl -s -X POST https://hub.docker.com/v2/users/login/ \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"$DOCKER_USER\", \"password\": \"$DOCKER_PASS\"}" | jq -r .token)
+
+          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+            echo "Warning: Failed to authenticate with Docker Hub API for cleanup."
+            exit 0
+          fi
+
+          # 2. Fetch tags matching this service prefix (excluding 'latest'), sorted by last updated
+          TAGS=$(curl -s -H "Authorization: JWT $TOKEN" \
+            "https://hub.docker.com/v2/namespaces/$DOCKER_USER/repositories/unified-resources/tags?page_size=100" \
+            | jq -r --arg prefix "$SERVICE_NAME-" '.results[] | select(.name | startswith($prefix)) | select(.name | contains("latest") | not) | .name')
+
+          # 3. Keep the top 2 newest tags, delete the rest
+          # Since Docker Hub returns them chronologically, we skip the first 2 lines and delete everything else
+          TAGS_TO_DELETE=$(echo "$TAGS" | tail -n +3)
+
+          for TAG in $TAGS_TO_DELETE; do
+            if [ -n "$TAG" ]; then
+              echo "Deleting old tag: $TARGET_REPO:$TAG"
+              curl -s -X DELETE -H "Authorization: JWT $TOKEN" \
+                "https://hub.docker.com/v2/namespaces/$DOCKER_USER/repositories/unified-resources/tags/$TAG/"
+            fi
+          done
+          
+          echo "Cleanup completed successfully!"
