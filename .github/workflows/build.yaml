@@ -41,3 +41,4 @@ jobs:
           IMAGE_NAME="${{ inputs.docker_image_name }}"
           echo "Building Docker image '$IMAGE_NAME' using Dockerfile at root..."
           docker build -t "$IMAGE_NAME" .
+          echo "Successfully created Docker image: $IMAGE_NAME"
