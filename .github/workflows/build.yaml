@@ -1,7 +1,7 @@
 name: Reusable Build Workflow
 
 on:
-- workflow_call:
+  workflow_call:
     inputs:
       docker_image_name:
         description: "Docker Image Name passed from Init stage"
