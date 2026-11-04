@@ -27,7 +27,6 @@ jobs:
       - name: Load Pipeline Configuration
         id: load_config
         run: |
-          # Default to false if file or keys don't exist
           REPO_VAL=false
           BRANCH_VAL=false
           IMAGE_VAL=false
@@ -46,7 +45,8 @@ jobs:
         id: get_repo
         if: steps.load_config.outputs.repo_enabled == 'true'
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          # Converted to lowercase using tr
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "Fetched repo_name: $REPO_NAME"
 
@@ -64,7 +64,8 @@ jobs:
         id: generate_name
         if: steps.load_config.outputs.image_enabled == 'true'
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          # Converted to lowercase using tr to satisfy Docker naming constraints
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
           TIMESTAMP=$(date +'%d-%m-%Y-%H-%M-%S')
           IMAGE_NAME="${REPO_NAME}-${TIMESTAMP}-${SHORT_SHA}"
