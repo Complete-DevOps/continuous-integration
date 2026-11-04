@@ -49,9 +49,9 @@ jobs:
       - name: Create Local Docker Image
         if: steps.load_config.outputs.create_enabled == 'true'
         run: |
-          SERVICE="${{ steps.load_config.outputs.service_name }}"
-          echo "Building local Docker image for service: $SERVICE"
-          docker build -t "$SERVICE-local:latest" .
+          SERVICE_NAME="${{ steps.load_config.outputs.service_name }}"
+          echo "Building local Docker image for service: $SERVICE_NAME"
+          docker build -t "$SERVICE_NAME-local:latest" .
           echo "Successfully created local image."
 
       - name: Push Docker Image to Docker Hub & Prune Old Tags
@@ -74,8 +74,8 @@ jobs:
           LATEST_IMAGE_NAME="$TARGET_REPO:$SERVICE_NAME-latest"
 
           echo "Tagging image -> $FULL_IMAGE_NAME"
-          docker tag "$SERVICE-local:latest" "$FULL_IMAGE_NAME"
-          docker tag "$SERVICE-local:latest" "$LATEST_IMAGE_NAME"
+          docker tag "$SERVICE_NAME-local:latest" "$FULL_IMAGE_NAME"
+          docker tag "$SERVICE_NAME-local:latest" "$LATEST_IMAGE_NAME"
 
           echo "Logging into Docker Hub..."
           echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
@@ -103,7 +103,6 @@ jobs:
             | jq -r --arg prefix "$SERVICE_NAME-" '.results[] | select(.name | startswith($prefix)) | select(.name | contains("latest") | not) | .name')
 
           # 3. Keep the top 2 newest tags, delete the rest
-          # Since Docker Hub returns them chronologically, we skip the first 2 lines and delete everything else
           TAGS_TO_DELETE=$(echo "$TAGS" | tail -n +3)
 
           for TAG in $TAGS_TO_DELETE; do
