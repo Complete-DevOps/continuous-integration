@@ -1,0 +1,43 @@
+name: Reusable Build Workflow
+
+on:
+- workflow_call:
+    inputs:
+      docker_image_name:
+        description: "Docker Image Name passed from Init stage"
+        required: true
+        type: string
+
+jobs:
+  build-stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Load Pipeline Configuration
+        id: load_config
+        run: |
+          FETCH_VAL=false
+          CREATE_VAL=false
+
+          if [ -f .pipeline/flow.yml ]; then
+            FETCH_VAL=$(yq eval '.Build.fetchImageVersion // false' .pipeline/flow.yml 2>/dev/null)
+            CREATE_VAL=$(yq eval '.Build.createDockerImage // false' .pipeline/flow.yml 2>/dev/null)
+          fi
+
+          echo "fetch_enabled=${FETCH_VAL}" >> $GITHUB_OUTPUT
+          echo "create_enabled=${CREATE_VAL}" >> $GITHUB_OUTPUT
+
+      - name: Fetch Image Version
+        id: fetch_version
+        if: steps.load_config.outputs.fetch_enabled == 'true'
+        run: |
+          echo "Fetched Image Name/Version: ${{ inputs.docker_image_name }}"
+
+      - name: Create Docker Image
+        if: steps.load_config.outputs.create_enabled == 'true'
+        run: |
+          IMAGE_NAME="${{ inputs.docker_image_name }}"
+          echo "Building Docker image '$IMAGE_NAME' using Dockerfile at root..."
+          docker build -t "$IMAGE_NAME" .
