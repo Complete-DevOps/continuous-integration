@@ -7,6 +7,13 @@ on:
         description: "Docker Image Name passed from Init stage"
         required: true
         type: string
+    secrets:
+      docker_username:
+        description: "Docker Hub Username"
+        required: false
+      docker_password:
+        description: "Docker Hub Password or Token"
+        required: false
 
 jobs:
   build-stage:
@@ -20,25 +27,62 @@ jobs:
         run: |
           FETCH_VAL=false
           CREATE_VAL=false
+          PUSH_VAL=false
+          SERVICE_NAME=""
 
           if [ -f .pipeline/flow.yml ]; then
             FETCH_VAL=$(yq eval '.Build.fetchImageVersion // false' .pipeline/flow.yml 2>/dev/null)
             CREATE_VAL=$(yq eval '.Build.createDockerImage // false' .pipeline/flow.yml 2>/dev/null)
+            PUSH_VAL=$(yq eval '.Build.pushDockerImage // false' .pipeline/flow.yml 2>/dev/null)
+            SERVICE_NAME=$(yq eval '.Build.serviceName // ""' .pipeline/flow.yml 2>/dev/null)
+          fi
+
+          # Fallback to repo name if serviceName is not defined in flow.yml
+          if [ -z "$SERVICE_NAME" ] || [ "$SERVICE_NAME" = "null" ]; then
+            SERVICE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           fi
 
           echo "fetch_enabled=${FETCH_VAL}" >> $GITHUB_OUTPUT
           echo "create_enabled=${CREATE_VAL}" >> $GITHUB_OUTPUT
+          echo "push_enabled=${PUSH_VAL}" >> $GITHUB_OUTPUT
+          echo "service_name=${SERVICE_NAME}" >> $GITHUB_OUTPUT
 
-      - name: Fetch Image Version
-        id: fetch_version
-        if: steps.load_config.outputs.fetch_enabled == 'true'
-        run: |
-          echo "Fetched Image Name/Version: ${{ inputs.docker_image_name }}"
-
-      - name: Create Docker Image
+      - name: Create Local Docker Image
         if: steps.load_config.outputs.create_enabled == 'true'
         run: |
-          IMAGE_NAME="${{ inputs.docker_image_name }}"
-          echo "Building Docker image '$IMAGE_NAME' using Dockerfile at root..."
-          docker build -t "$IMAGE_NAME" .
-          echo "Successfully created Docker image: $IMAGE_NAME"
+          SERVICE="${{ steps.load_config.outputs.service_name }}"
+          echo "Building local Docker image for service: $SERVICE"
+          docker build -t "$SERVICE-local:latest" .
+          echo "Successfully created local image."
+
+      - name: Push Docker Image to Docker Hub
+        if: steps.load_config.outputs.push_enabled == 'true'
+        env:
+          DOCKER_USER: ${{ secrets.docker_username }}
+          DOCKER_PASS: ${{ secrets.docker_password }}
+          INPUT_IMAGE_NAME: ${{ inputs.docker_image_name }}
+          SERVICE_NAME: ${{ steps.load_config.outputs.service_name }}
+        run: |
+          if [ -z "$DOCKER_USER" ] || [ -z "$DOCKER_PASS" ]; then
+            echo "Error: Docker Hub credentials are missing from repository secrets!"
+            exit 1
+          fi
+
+          VERSION_TAG=$(echo "$INPUT_IMAGE_NAME" | sed 's/^[^-]*-//')
+
+          TARGET_REPO="$DOCKER_USER/unified-resources"
+          
+          FULL_IMAGE_NAME="$TARGET_REPO:$SERVICE_NAME-$VERSION_TAG"
+          LATEST_IMAGE_NAME="$TARGET_REPO:$SERVICE_NAME-latest"
+
+          echo "Tagging image -> $FULL_IMAGE_NAME"
+          docker tag "$SERVICE_NAME-local:latest" "$FULL_IMAGE_NAME"
+          docker tag "$SERVICE_NAME-local:latest" "$LATEST_IMAGE_NAME"
+
+          echo "Logging into Docker Hub..."
+          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+          echo "Pushing images to Docker Hub..."
+          docker push "$FULL_IMAGE_NAME"
+          docker push "$LATEST_IMAGE_NAME"
+          echo "Successfully pushed $SERVICE_NAME images to $TARGET_REPO!"
